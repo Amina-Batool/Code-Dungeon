@@ -1,0 +1,43 @@
+# ── API Keys and secrets — NEVER COMMIT THESE ────────────────────────────────
+*.key
+*.secret
+.env
+.env.local
+.env.*.local
+*api_key*
+*apikey*
+*secret*
+
+# Groq API key prefix pattern
+gsk_*
+
+# Local config file (contains your private API key!)
+config.js
+
+# ── IDE files ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS files ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Backup / temp files ───────────────────────────────────────────────────────
+*.bak
+*.backup
+*.old
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+
+# ── Node (if a local dev server is ever added) ────────────────────────────────
+node_modules/

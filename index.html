@@ -1,0 +1,1642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Dungeon ⚔️</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Optional live config — create config.js locally from config.example.js.
+       This file is gitignored and MUST NOT be committed. -->
+  <script src="config.js" onerror="console.log('ℹ️ config.js not found — running in Demo Mode.')"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] } } }
+    }
+  </script>
+  <style>
+    /* ── Base ── */
+    .hidden { display: none !important; }
+
+    body {
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      background-size: 300% 300%;
+      animation: gradientShift 20s ease infinite;
+      min-height: 100vh;
+    }
+    @keyframes gradientShift {
+      0%,100% { background-position: 0% 50%; }
+      50%      { background-position: 100% 50%; }
+    }
+
+    /* ── Health / mana bars ── */
+    .bar-track { background: #1f2937; border-radius: 999px; overflow: hidden; height: 14px; }
+    .bar-fill   { height: 100%; border-radius: 999px; transition: width 0.4s cubic-bezier(.4,0,.2,1); }
+    .bar-player { background: linear-gradient(90deg,#22c55e,#16a34a); }
+    .bar-mana   { background: linear-gradient(90deg,#3b82f6,#1d4ed8); }
+    .bar-dragon { background: linear-gradient(90deg,#ef4444,#dc2626); }
+    .bar-xp     { background: linear-gradient(90deg,#f59e0b,#d97706); }
+
+    /* ── Dragon phase-2 glow ── */
+    .dragon-enraged { animation: dragonGlow 1s ease-in-out infinite alternate; }
+    @keyframes dragonGlow {
+      from { text-shadow: 0 0 10px #ef4444; }
+      to   { text-shadow: 0 0 30px #ef4444, 0 0 50px #dc2626; }
+    }
+
+    /* ── Screen shake on player hit ── */
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20%     { transform: translateX(-8px) rotate(-1deg); }
+      40%     { transform: translateX(8px)  rotate(1deg);  }
+      60%     { transform: translateX(-5px); }
+      80%     { transform: translateX(5px);  }
+    }
+    .screen-shake { animation: shake 0.35s ease-in-out; }
+
+    /* ── Critical hit flash ── */
+    @keyframes critFlash {
+      0%,100% { background: transparent; }
+      30%     { background: rgba(239,68,68,0.25); }
+    }
+    .crit-flash { animation: critFlash 0.4s ease; }
+
+    /* ── Floating damage numbers ── */
+    .dmg-popup {
+      position: absolute;
+      pointer-events: none;
+      font-weight: 900;
+      font-size: 1.5rem;
+      animation: floatUp 1s ease-out forwards;
+      z-index: 100;
+    }
+    .dmg-player { color: #ef4444; }
+    .dmg-dragon { color: #22c55e; }
+    .dmg-heal   { color: #a78bfa; }
+    @keyframes floatUp {
+      0%   { opacity: 1; transform: translateY(0) scale(1.2); }
+      100% { opacity: 0; transform: translateY(-60px) scale(0.8); }
+    }
+
+    /* ── Battle log ── */
+    .battle-log {
+      background: rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 10px 12px;
+      height: 140px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 0.72rem;
+      line-height: 1.6;
+    }
+    .battle-log::-webkit-scrollbar { width: 4px; }
+    .battle-log::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+    .log-player { color: #4ade80; }
+    .log-dragon { color: #f87171; }
+    .log-system { color: #fbbf24; }
+    .log-spell  { color: #c084fc; }
+
+    /* ── Option buttons ── */
+    .option-btn {
+      transition: transform 130ms ease, box-shadow 130ms ease, background-color 130ms ease;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    .option-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(59,130,246,0.4);
+      border-color: #60a5fa;
+    }
+    .option-btn:active:not(:disabled) { transform: scale(0.97); }
+    .option-correct { background: rgba(34,197,94,0.25) !important; border-color: #22c55e !important; }
+    .option-wrong   { background: rgba(239,68,68,0.25)  !important; border-color: #ef4444 !important; }
+
+    /* ── Action buttons ── */
+    .action-btn {
+      transition: transform 130ms ease, box-shadow 130ms ease;
+    }
+    .action-btn:hover:not(:disabled) {
+      transform: scale(1.06);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+    }
+    .action-btn:active:not(:disabled) { transform: scale(0.97); }
+
+    /* ── Spinner ── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block; width: 1.75rem; height: 1.75rem;
+      border: 3px solid rgba(255,255,255,0.2); border-top-color: #60a5fa;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+    }
+
+    /* ── Milestone badge pop-in ── */
+    @keyframes badgePop {
+      0%   { transform: scale(0.4) translateY(20px); opacity: 0; }
+      70%  { transform: scale(1.1) translateY(-4px); opacity: 1; }
+      100% { transform: scale(1)   translateY(0);    opacity: 1; }
+    }
+    .milestone-badge { animation: badgePop 0.45s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+
+    /* ── Questions remaining badge pulse ── */
+    @keyframes badgePulse {
+      0%,100% { transform: scale(1);    opacity: 1;    }
+      40%     { transform: scale(1.25); opacity: 0.85; }
+    }
+    .badge-pulse { animation: badgePulse 0.35s ease; }
+
+    /* ── Battle screen: fixed full-viewport layout ── */
+    #screen-battle {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-width: 600px;
+      margin: 0 auto;
+      background: transparent;
+      overflow: hidden;
+    }
+
+    /* ── Smooth custom scrollbar for the scrollable battle area ── */
+    .battle-scroll-area {
+      scrollbar-width: thin;
+      scrollbar-color: #4b5563 #1f2937;
+    }
+    .battle-scroll-area::-webkit-scrollbar       { width: 5px; }
+    .battle-scroll-area::-webkit-scrollbar-track  { background: #1f2937; border-radius: 10px; }
+    .battle-scroll-area::-webkit-scrollbar-thumb  { background: #4b5563; border-radius: 10px; }
+
+    /* ── Compact battle log ── */
+    .battle-log {
+      max-height: 120px;
+      font-size: 0.7rem;
+      padding: 8px 10px;
+    }
+
+    /* ── Action buttons ── */
+    #action-buttons { gap: 8px; margin-bottom: 12px; }
+    .action-btn     { padding: 8px 4px; font-size: 0.7rem; }
+
+    /* ── Arena ── */
+    #arena { padding: 8px 16px; margin-bottom: 6px; }
+
+    /* ── Option buttons ── */
+    .option-btn { padding: 10px 12px; font-size: 0.8rem; }
+
+    /* ── Mascot / avatar ── */
+    #mascot {
+      font-size: 2.2rem; line-height: 1;
+      filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5));
+      transition: transform 200ms ease;
+      user-select: none;
+    }
+    @keyframes avatarAttack {
+      0%,100% { transform: translateX(0) rotate(0);    }
+      40%     { transform: translateX(12px) rotate(-8deg); }
+    }
+    @keyframes avatarHit {
+      0%,100% { transform: translateX(0); }
+      30%     { transform: translateX(-10px); }
+      60%     { transform: translateX(6px); }
+    }
+    @keyframes avatarCelebrate {
+      0%,100% { transform: scale(1) rotate(0); }
+      25%     { transform: scale(1.3) rotate(-15deg); }
+      75%     { transform: scale(1.3) rotate(15deg); }
+    }
+    @keyframes avatarThink {
+      0%,100% { transform: translateY(0); }
+      50%     { transform: translateY(-5px); }
+    }
+    .avatar-attack    { animation: avatarAttack    0.4s ease; }
+    .avatar-hit       { animation: avatarHit       0.3s ease; }
+    .avatar-celebrate { animation: avatarCelebrate 0.5s ease 3; }
+    .avatar-think     { animation: avatarThink     1.2s ease infinite; }
+
+    /* ── Dragon emoji ── */
+    #dragon-emoji {
+      font-size: 4rem; line-height: 1;
+      filter: drop-shadow(0 4px 12px rgba(239,68,68,0.6));
+      user-select: none;
+    }
+    @keyframes dragonAttack {
+      0%,100% { transform: translateX(0) scale(1); }
+      40%     { transform: translateX(-14px) scale(1.1); }
+    }
+    @keyframes dragonHit {
+      0%,100% { transform: translateX(0) scale(1); }
+      30%     { transform: translateX(12px) scale(0.9); }
+    }
+    .dragon-attack { animation: dragonAttack 0.45s ease; }
+    .dragon-hit    { animation: dragonHit    0.35s ease; }
+
+    /* ── Sound toggle ── */
+    #sound-toggle {
+      background: transparent; border: none; cursor: pointer;
+      font-size: 1.1rem; opacity: 0.6; transition: opacity 150ms;
+    }
+    #sound-toggle:hover { opacity: 1; }
+
+    /* ── Modal backdrop ── */
+    .modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    /* ── Hint card in modal ── */
+    .hint-card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px; padding: 10px 14px;
+      font-size: 0.82rem; line-height: 1.6; color: #e2e8f0;
+    }
+
+    /* ── Confetti ── */
+    #confetti-canvas { position: fixed; inset: 0; pointer-events: none; z-index: 9999; }
+
+    /* ── Loading fade ── */
+    .loading-msg { transition: opacity 150ms ease; }
+  </style>
+</head>
+
+<body class="font-sans text-white select-none">
+
+  <!-- Confetti -->
+  <canvas id="confetti-canvas" class="hidden"></canvas>
+
+  <!-- Milestone badge -->
+  <div id="milestone-banner" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none"></div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- SCREEN 1: QUEST ENTRY (Problem Input)          -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="screen-quest" class="min-h-screen flex items-center justify-center px-4 py-10">
+    <div class="w-full max-w-lg">
+
+      <!-- Title -->
+      <div class="text-center mb-8">
+        <div class="text-6xl mb-3">🏰</div>
+        <h1 class="text-4xl font-black tracking-tight bg-gradient-to-r from-yellow-300 via-orange-400 to-red-500 bg-clip-text text-transparent">
+          CODE DUNGEON
+        </h1>
+        <p class="text-gray-400 mt-2 text-sm">Defeat the dragon with your knowledge ⚔️</p>
+      </div>
+
+      <!-- API / Demo banner -->
+      <div id="api-key-error" class="hidden border rounded-xl px-4 py-3 text-center text-sm font-medium mb-4"></div>
+
+      <!-- Card -->
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
+        <h2 class="text-lg font-bold text-yellow-300 mb-1">📜 Choose Your Quest</h2>
+        <p class="text-gray-400 text-xs mb-5">Enter a coding or math problem and enter the dungeon.</p>
+
+        <div class="mb-4">
+          <label class="block text-xs font-semibold text-gray-300 mb-1.5 uppercase tracking-wide">Your problem</label>
+          <textarea id="problem-input" maxlength="10000" rows="5"
+            placeholder="Paste your coding or math challenge here…"
+            class="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400/50 resize-y"></textarea>
+        </div>
+
+        <div class="mb-5">
+          <label class="block text-xs font-semibold text-gray-300 mb-1.5 uppercase tracking-wide">Discipline</label>
+          <select id="subject-select"
+            class="w-full sm:w-44 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400/50">
+            <option value="Coding" selected>⚙️ Coding</option>
+            <option value="Math">🔢 Math</option>
+          </select>
+        </div>
+
+        <div id="input-error" class="hidden mb-4 text-sm text-red-400 bg-red-900/30 border border-red-500/30 rounded-lg px-3 py-2"></div>
+
+        <button type="button" id="enter-dungeon-btn"
+          class="action-btn w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400 text-black font-bold text-sm rounded-xl shadow-lg shadow-orange-500/30">
+          ⚔️ Enter the Dungeon
+        </button>
+
+        <p class="text-center text-xs text-gray-500 mt-4">
+          Demo mode:
+          <button type="button" id="demo-toggle-btn" class="text-yellow-400 underline hover:text-yellow-300">enable</button>
+          &nbsp;|&nbsp; Sounds:
+          <button id="sound-toggle" type="button">🔇</button>
+        </p>
+      </div>
+
+      <!-- Level / XP recap (shown after first battle) -->
+      <div id="player-recap" class="hidden mt-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center text-xs text-gray-400">
+        Dungeons cleared: <span id="dungeons-cleared" class="text-yellow-300 font-bold">0</span>
+        &nbsp;·&nbsp; Hero Level: <span id="recap-level" class="text-purple-300 font-bold">1</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- SCREEN 2: BATTLE ARENA                         -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="screen-battle" class="hidden" style="position:fixed;inset:0;display:flex;flex-direction:column;height:100vh;overflow:hidden;max-width:42rem;margin:0 auto">
+
+    <!-- ── FIXED: Top stats bar ── -->
+    <div class="flex-shrink-0 px-3 pt-3 pb-1">
+      <div class="flex items-center justify-between text-xs">
+        <!-- Player stats -->
+        <div class="flex-1 mr-3">
+          <div class="flex items-center justify-between mb-0.5">
+            <span class="text-green-400 font-bold text-xs">⚔️ Hero</span>
+            <span id="player-hp-text" class="text-green-300 font-mono text-xs">100/100</span>
+          </div>
+          <div class="bar-track mb-1"><div id="player-hp-fill" class="bar-fill bar-player" style="width:100%"></div></div>
+          <div class="flex items-center justify-between mb-0.5">
+            <span class="text-blue-400 font-bold text-xs">✨ Mana</span>
+            <span id="player-mana-text" class="text-blue-300 font-mono text-xs">50/50</span>
+          </div>
+          <div class="bar-track"><div id="player-mana-fill" class="bar-fill bar-mana" style="width:100%"></div></div>
+        </div>
+        <!-- Level + XP -->
+        <div class="text-center px-2 flex-shrink-0">
+          <div class="text-yellow-300 font-black text-lg leading-none" id="player-level-display">Lv.1</div>
+          <div class="text-gray-400 text-xs mb-0.5">XP</div>
+          <div class="bar-track w-16"><div id="player-xp-fill" class="bar-fill bar-xp" style="width:0%"></div></div>
+        </div>
+        <!-- Dragon stats -->
+        <div class="flex-1 ml-3">
+          <div class="flex items-center justify-between mb-0.5">
+            <span class="text-red-400 font-bold text-xs">🐉 <span id="dragon-name-label">Emberfang</span></span>
+            <span id="dragon-hp-text" class="text-red-300 font-mono text-xs">150/150</span>
+          </div>
+          <div class="bar-track mb-1"><div id="dragon-hp-fill" class="bar-fill bar-dragon" style="width:100%"></div></div>
+          <div class="flex justify-end">
+            <span id="dragon-phase-badge" class="text-xs text-orange-400 font-bold"></span>
+          </div>
+        </div>
+
+        <!-- Questions remaining badge -->
+        <div class="flex-shrink-0 ml-2 text-center">
+          <div class="text-xs text-purple-300">⚔️</div>
+          <div id="questions-remaining-badge" class="text-xs font-bold text-yellow-300 leading-tight">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── FIXED: Arena ── -->
+    <div class="flex-shrink-0 px-3 pb-1">
+      <div id="arena" class="relative flex items-center justify-between bg-black/30 border border-white/10 rounded-xl px-5 py-2">
+        <div class="text-center">
+          <div id="mascot" class="text-3xl">🧙</div>
+          <div class="text-xs text-green-400 font-bold">YOU</div>
+          <div id="streak-badge" class="hidden text-xs text-yellow-300 font-bold">🔥 x<span id="streak-count">0</span></div>
+        </div>
+        <div class="text-center text-gray-500 font-black text-base tracking-widest">VS</div>
+        <div class="text-center">
+          <div id="dragon-emoji" class="text-5xl">🐉</div>
+          <div id="dragon-name-arena" class="text-xs text-red-400 font-bold">EMBERFANG</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── FIXED: Dragon speech ── -->
+    <div class="flex-shrink-0 px-3 pb-1">
+      <div id="dragon-speech" class="bg-red-900/30 border border-red-500/30 rounded-xl px-3 py-1.5 text-xs text-red-300 italic">
+        🐉 "Your feeble mind cannot comprehend my power!"
+      </div>
+    </div>
+
+    <!-- ── SCROLLABLE: Problem + questions + log ── -->
+    <div class="flex-1 overflow-y-auto px-3 pb-2">
+
+      <!-- Problem display -->
+      <div class="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 mb-2">
+        <div class="text-xs font-bold text-yellow-300 uppercase tracking-wide mb-1">📜 The Challenge</div>
+        <p id="problem-display" class="text-sm text-gray-200 whitespace-pre-wrap"></p>
+      </div>
+
+      <!-- Loading state -->
+      <div id="battle-loading" class="hidden bg-white/5 border border-white/10 rounded-xl px-4 py-5 mb-2 flex-col items-center gap-3">
+        <div class="spinner"></div>
+        <p id="battle-loading-msg" class="loading-msg text-sm text-gray-400 text-center">Consulting the ancient tomes… 📖</p>
+      </div>
+
+      <!-- Answer options -->
+      <div id="answer-options" class="hidden flex-col gap-2 mb-2"></div>
+
+      <!-- Error display -->
+      <div id="battle-error" class="hidden mb-2"></div>
+
+      <!-- Action buttons -->
+      <div id="action-buttons" class="hidden grid grid-cols-2 gap-2 mb-2">
+        <button type="button" id="hint-btn"
+          class="action-btn py-2 bg-purple-700/60 hover:bg-purple-600/80 border border-purple-500/40 rounded-xl text-xs font-bold text-purple-200">
+          📖 Hint Tome <span class="text-purple-400">(-5 🔵)</span>
+        </button>
+        <button type="button" id="fireball-btn"
+          class="action-btn py-2 bg-orange-700/60 hover:bg-orange-600/80 border border-orange-500/40 rounded-xl text-xs font-bold text-orange-200">
+          🔥 Fireball <span class="text-orange-400">(-20 🔵)</span>
+        </button>
+        <button type="button" id="heal-btn"
+          class="action-btn py-2 bg-green-700/60 hover:bg-green-600/80 border border-green-500/40 rounded-xl text-xs font-bold text-green-200">
+          💚 Heal <span class="text-green-400">(-15 🔵)</span>
+        </button>
+        <button type="button" id="potion-btn"
+          class="action-btn py-2 bg-pink-700/60 hover:bg-pink-600/80 border border-pink-500/40 rounded-xl text-xs font-bold text-pink-200">
+          🧪 Potion <span class="text-pink-400">(-20 🔵)</span>
+        </button>
+      </div>
+
+      <!-- Battle log -->
+      <div class="mb-1 text-xs font-bold text-gray-400 uppercase tracking-wide">⚡ Battle Log</div>
+      <div id="battle-log" class="battle-log"></div>
+
+    </div><!-- end scrollable -->
+
+    <!-- ── FIXED: Retreat button at bottom ── -->
+    <div class="flex-shrink-0 text-center py-2">
+      <button type="button" id="retreat-btn" class="text-xs text-gray-600 hover:text-gray-400 underline">
+        🏳️ Retreat to quest selection
+      </button>
+    </div>
+
+  </div><!-- end #screen-battle -->
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- MODAL: Hint Tome                               -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="hint-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true">
+    <div class="w-full max-w-md bg-gray-900 border border-purple-500/40 rounded-2xl p-5 mx-4">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-black text-purple-300">📖 Ancient Tome</h3>
+        <button type="button" id="close-hint-modal" class="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+      </div>
+      <div id="hint-modal-body" class="flex flex-col gap-2">
+        <div class="flex justify-center py-4"><div class="spinner"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- MODAL: Victory                                 -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="victory-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true">
+    <div class="w-full max-w-sm bg-gray-900 border border-yellow-500/50 rounded-2xl p-6 mx-4 text-center">
+      <div class="text-7xl mb-3">🏆</div>
+      <h2 class="text-3xl font-black text-yellow-300 mb-1">VICTORY!</h2>
+      <p id="victory-msg" class="text-gray-300 text-sm mb-4"></p>
+      <div id="levelup-notice" class="hidden mb-4 py-2 px-4 bg-purple-900/60 border border-purple-500/40 rounded-xl text-purple-200 text-sm font-bold"></div>
+      <div class="flex flex-col gap-2">
+        <button type="button" id="next-dragon-btn"
+          class="action-btn py-3 bg-gradient-to-r from-yellow-500 to-orange-500 text-black font-bold rounded-xl">
+          ⚔️ Fight Next Dragon
+        </button>
+        <button type="button" id="new-quest-btn"
+          class="action-btn py-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-sm text-gray-200">
+          📜 New Quest
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- MODAL: Defeat                                  -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="defeat-modal" class="hidden modal-backdrop" role="dialog" aria-modal="true">
+    <div class="w-full max-w-sm bg-gray-900 border border-red-500/40 rounded-2xl p-6 mx-4 text-center">
+      <div class="text-7xl mb-3">💀</div>
+      <h2 class="text-3xl font-black text-red-400 mb-1">DEFEATED</h2>
+      <p id="defeat-msg" class="text-gray-300 text-sm mb-5"></p>
+      <div class="flex flex-col gap-2">
+        <button type="button" id="retry-battle-btn"
+          class="action-btn py-3 bg-red-600 hover:bg-red-500 font-bold rounded-xl text-sm">
+          🔄 Try Again
+        </button>
+        <button type="button" id="defeat-new-quest-btn"
+          class="action-btn py-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-sm text-gray-200">
+          📜 New Quest
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ════════════════════════════════════════════════════════════════════════
+    // CODE DUNGEON — Configuration Loader
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // API keys are NEVER hardcoded here.
+    // To use the live Groq API:
+    //   1. Copy config.example.js → config.js
+    //   2. Add your Groq key (get one free at console.groq.com/keys)
+    //   3. Serve the folder via a local HTTP server (see INSTALL.md)
+    //
+    // Without config.js the game runs in Demo Mode automatically.
+
+    let DEMO_MODE = true;   // Default: safe fallback — no API key needed
+    let API_KEY   = "";
+    let API_URL   = "https://api.groq.com/openai/v1/chat/completions";
+    let MODEL     = "llama-3.3-70b-versatile";
+
+    // Try to load live config injected by config.js (gitignored, local only)
+    try {
+      if (typeof LIVE_CONFIG !== 'undefined' && LIVE_CONFIG && LIVE_CONFIG.API_KEY &&
+          LIVE_CONFIG.API_KEY !== 'your_groq_api_key_here') {
+        DEMO_MODE = LIVE_CONFIG.DEMO_MODE !== undefined ? LIVE_CONFIG.DEMO_MODE : false;
+        API_KEY   = LIVE_CONFIG.API_KEY;
+        API_URL   = LIVE_CONFIG.API_URL   || API_URL;
+        MODEL     = LIVE_CONFIG.MODEL     || MODEL;
+        console.log('✅ Live API mode enabled');
+      } else {
+        console.log('ℹ️ No valid config.js found — running in Demo Mode.');
+      }
+    } catch (e) {
+      console.log('⚠️ Config load error — falling back to Demo Mode:', e.message);
+    }
+
+    const TIMEOUT_MS  = 30000;
+    const STORAGE_KEY = "cd_dungeons_cleared";
+
+    // ════════════════════════════════════════════════════════════════════════
+    // GAME STATE
+    // ════════════════════════════════════════════════════════════════════════
+
+    let player = { hp: 100, maxHp: 100, mana: 50, maxMana: 50, level: 1, xp: 0, streak: 0 };
+
+    const DRAGON_TEMPLATES = [
+      { name: 'Emberfang',    emoji: '🐉', hp: 120, maxHp: 120, attackPower: 15, speech: "Your feeble code shall burn!" },
+      { name: 'Shadowbyte',   emoji: '🦎', hp: 150, maxHp: 150, attackPower: 20, speech: "Bugs plague your every line!" },
+      { name: 'NullReaper',   emoji: '🐲', hp: 180, maxHp: 180, attackPower: 25, speech: "Null pointer ends your quest!" },
+      { name: 'StackBreakor', emoji: '🔥', hp: 220, maxHp: 220, attackPower: 30, speech: "Your recursion has no base case!" },
+    ];
+    let dragonTier = 0;
+    let dragon = { ...DRAGON_TEMPLATES[0], phase: 1 };
+
+    let currentProblem = '';
+    let currentSubject = 'Coding';
+    let currentQuiz    = [];    // { question, options, correct, concept, answered }
+    let questionIdx    = 0;     // index into currentQuiz
+    let questionsCorrect = 0;
+    let battleLog      = [];
+    let soundEnabled   = false;
+
+    // ════════════════════════════════════════════════════════════════════════
+    // UTILITIES
+    // ════════════════════════════════════════════════════════════════════════
+
+    function escapeHTML(str) {
+      const m = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+      return String(str).replace(/[&<>"']/g, ch => m[ch]);
+    }
+
+    async function fetchWithTimeout(url, options, ms) {
+      const ctrl = new AbortController();
+      const tid  = setTimeout(() => ctrl.abort(), ms);
+      try {
+        const res = await fetch(url, { ...options, signal: ctrl.signal });
+        clearTimeout(tid); return res;
+      } catch (err) {
+        clearTimeout(tid);
+        if (err.name === 'AbortError') { const e = new Error('Request timed out.'); e.name = 'TimeoutError'; throw e; }
+        throw err;
+      }
+    }
+
+    function validateApiKey(k) {
+      // In demo mode or override, always valid — no key needed
+      if (DEMO_MODE || window._demoModeOverride) return true;
+      return k != null && k !== '' && k !== 'YOUR_API_KEY_HERE' && k !== 'your_groq_api_key_here';
+    }
+
+    // ── Groq retry wrapper ────────────────────────────────────────────────
+    async function callLLMWithRetry(bodyObj, onRetryMsg, maxRetries = 3) {
+      const BASE_DELAY_MS = 2000;
+      let attempt = 0;
+      while (attempt < maxRetries) {
+        attempt++;
+        let res;
+        try {
+          const groqBody = { model: MODEL, messages: bodyObj.messages, temperature: bodyObj.temperature ?? 0.7, max_tokens: bodyObj.max_tokens ?? 400, stream: false };
+          res = await fetchWithTimeout(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+            body: JSON.stringify(groqBody)
+          }, TIMEOUT_MS);
+        } catch (err) {
+          throw new Error(err.name === 'TimeoutError' ? 'Request timed out. Try again.' : "Can't reach AI — check connection.");
+        }
+        if (res.status === 429 && attempt < maxRetries) {
+          const waitSec = (BASE_DELAY_MS * Math.pow(2, attempt - 1)) / 1000;
+          for (let r = waitSec; r > 0; r--) {
+            onRetryMsg(`Rate limit hit. Retrying in ${Math.ceil(r)}s…`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+          onRetryMsg('Retrying…'); continue;
+        }
+        if (res.status === 429) {
+          const e = new Error("Rate limit exhausted after 3 attempts. Wait a minute or switch to Demo Mode.");
+          e.name = 'RateLimitError'; throw e;
+        }
+        if (!res.ok) {
+          let d = '';
+          try { d = (await res.text()).slice(0, 120); } catch { /* */ }
+          console.error('Groq error', res.status, d);
+          throw new Error(`AI error (${res.status})${d ? ': ' + d : ''}. Try again.`);
+        }
+        return res;
+      }
+      throw new Error('Max retries exceeded.');
+    }
+
+    // ── Demo mock data ────────────────────────────────────────────────────
+    const DEMO_QUIZ_DATA = [
+      { question: "Which approach identifies the base case most reliably?",        options: ["A) Start with the hardest input",   "B) Find the smallest trivially-known input", "C) Pick a random starting point",            "D) Trial and error"],                  correct: "B", concept: "Base case identification" },
+      { question: "Why is modifying a collection while iterating risky?",          options: ["A) Syntax error always occurs",     "B) Uses more memory",                        "C) Elements can be skipped or produce bugs", "D) Not allowed in any language"],       correct: "C", concept: "Safe iteration" },
+      { question: "What is a divide and conquer strategy?",                        options: ["A) Brute force then optimise",      "B) Split into sub-problems, solve, combine", "C) Lookup table approach",                   "D) Rewrite in another language"],       correct: "B", concept: "Divide and conquer" },
+      { question: "What is the best way to find an off-by-one error?",            options: ["A) Run on empty input only",        "B) Test boundary values like 0, 1, and n-1", "C) Add print statements everywhere",         "D) Increase the loop counter by 2"],    correct: "B", concept: "Boundary testing" },
+      { question: "Which data structure gives O(1) average-case lookup by key?",  options: ["A) Sorted array",                   "B) Linked list",                             "C) Hash map",                                "D) Binary search tree"],                correct: "C", concept: "Hash map complexity" }
+    ];
+
+    /**
+     * Generates 5 fresh, dragon-specific demo questions so that each new dragon
+     * in demo mode presents a different challenge rather than repeating the same set.
+     * Falls back gracefully to DEMO_QUIZ_DATA if the dragon name is unrecognised.
+     *
+     * @param {string} problem    - The current problem text (used for context hints)
+     * @param {string} subject    - "Coding" or "Math"
+     * @param {string} dragonName - Name from DRAGON_TEMPLATES (determines question flavour)
+     * @returns {{ question, options, correct, concept, answered }[]}
+     */
+    function generateFreshDemoQuestions(problem, subject, dragonName) {
+      const preview     = (problem || '').slice(0, 120);
+      const hasLoops    = /for|while|loop|iterate/i.test(preview);
+      const hasFunctions= /function|def|return|method/i.test(preview);
+      const hasArrays   = /array|list|vector|collection/i.test(preview);
+      const hasMath     = /sum|sort|matrix|prime|fibonacci|factorial/i.test(preview);
+      const isMath      = subject === 'Math';
+
+      // Each dragon tier has its own conceptual focus
+      const DRAGON_POOLS = {
+        Emberfang: [
+          { question: "What is the very first step when approaching a new problem?",
+            options: ["A) Understand inputs and expected outputs", "B) Start coding immediately", "C) Search for a solution online", "D) Optimise for performance first"],
+            correct: "A", concept: "Problem analysis — Emberfang Tier" },
+          { question: hasFunctions
+              ? "Why is breaking code into smaller functions important?"
+              : "Why is breaking a problem into sub-tasks important?",
+            options: ["A) Easier to test and debug", "B) Uses less memory", "C) Required by the language", "D) Makes code longer"],
+            correct: "A", concept: "Decomposition — Emberfang Tier" },
+          { question: "What should you do before writing a single line of code?",
+            options: ["A) Understand the constraints and edge cases", "B) Pick the fastest algorithm", "C) Write tests first", "D) Both A and C"],
+            correct: "D", concept: "Planning — Emberfang Tier" },
+          { question: hasArrays
+              ? "When iterating over an array, what index should you start with?"
+              : "What is the simplest non-trivial input to test your logic on?",
+            options: ["A) 0 (zero-indexed)", "B) 1 (one-indexed)", "C) The middle element", "D) The last element"],
+            correct: "A", concept: "Iteration basics — Emberfang Tier" },
+          { question: "Which is the best way to verify your solution is correct?",
+            options: ["A) Test multiple cases including edge cases", "B) Run it once with any input", "C) Trust your logic without testing", "D) Use only the given example"],
+            correct: "A", concept: "Testing — Emberfang Tier" },
+        ],
+        Shadowbyte: [
+          { question: "What is an 'edge case'?",
+            options: ["A) Input at the boundary of valid range (e.g. empty, max, negative)", "B) Any input that causes a crash", "C) The worst-case input for performance", "D) An input that only exists in theory"],
+            correct: "A", concept: "Edge cases — Shadowbyte Tier" },
+          { question: "What does 'time complexity' measure?",
+            options: ["A) How long the code takes to write", "B) How execution time scales with input size", "C) The number of lines of code", "D) CPU clock speed requirements"],
+            correct: "B", concept: "Time complexity — Shadowbyte Tier" },
+          { question: "Which loop is safest when you don't know the number of iterations?",
+            options: ["A) for loop with fixed bound", "B) while loop with a clear exit condition", "C) do-while loop", "D) Infinite loop with a break"],
+            correct: "B", concept: "Loop safety — Shadowbyte Tier" },
+          { question: "What is the time complexity of searching an unsorted array?",
+            options: ["A) O(1)", "B) O(log n)", "C) O(n)", "D) O(n²)"],
+            correct: "C", concept: "Linear search — Shadowbyte Tier" },
+          { question: "What should you check before accessing an index in an array?",
+            options: ["A) That the index is within bounds", "B) That the array is sorted", "C) That the array has no duplicates", "D) That the value at the index is non-zero"],
+            correct: "A", concept: "Bounds checking — Shadowbyte Tier" },
+        ],
+        NullReaper: [
+          { question: hasArrays
+              ? "Which data structure gives O(1) average lookup by key?"
+              : (isMath ? "What is the most efficient way to check if a number is prime?" : "What is memoisation?"),
+            options: ["A) Sorted array", "B) Hash map / dictionary", "C) Linked list", "D) Binary search tree"],
+            correct: "B", concept: "Data structures — NullReaper Tier" },
+          { question: "What does it mean for an algorithm to be O(n log n)?",
+            options: ["A) It runs n times then logs the result", "B) Its time scales as n multiplied by log n (e.g. merge sort)", "C) It only works on sorted data", "D) It has n² steps in the worst case"],
+            correct: "B", concept: "Complexity class — NullReaper Tier" },
+          { question: "What is a null pointer / null reference error caused by?",
+            options: ["A) Accessing a variable that was never assigned", "B) Using the wrong data type", "C) Integer overflow", "D) A missing semicolon"],
+            correct: "A", concept: "Null safety — NullReaper Tier" },
+          { question: "When should you use recursion instead of iteration?",
+            options: ["A) When the problem has a natural self-similar sub-structure", "B) Always — recursion is faster", "C) Only when the language forbids loops", "D) When you want to use less memory"],
+            correct: "A", concept: "Recursion vs iteration — NullReaper Tier" },
+          { question: "What is the space complexity of a recursive algorithm without tail-call optimisation?",
+            options: ["A) O(1)", "B) O(log n)", "C) O(n) — each call adds a stack frame", "D) O(n²)"],
+            correct: "C", concept: "Call stack — NullReaper Tier" },
+        ],
+        StackBreakor: [
+          { question: "What is the base case in a recursive function?",
+            options: ["A) The case that stops the recursion", "B) The first argument passed", "C) The largest possible input", "D) A loop inside the recursion"],
+            correct: "A", concept: "Recursion base case — StackBreakor Tier" },
+          { question: "What causes a stack overflow?",
+            options: ["A) Writing too much data to a variable", "B) Infinite or too-deep recursion with no base case", "C) Using too many imports", "D) A missing return statement"],
+            correct: "B", concept: "Stack overflow — StackBreakor Tier" },
+          { question: "What design pattern separates concerns by splitting data, logic, and display?",
+            options: ["A) Singleton", "B) Observer", "C) Model-View-Controller (MVC)", "D) Factory"],
+            correct: "C", concept: "Design patterns — StackBreakor Tier" },
+          { question: "What does Big-O notation describe in the worst case?",
+            options: ["A) Exact runtime in milliseconds", "B) An upper bound on how runtime grows with input size", "C) The best possible performance", "D) The number of bugs in the code"],
+            correct: "B", concept: "Big-O worst case — StackBreakor Tier" },
+          { question: "Which statement about dynamic programming is TRUE?",
+            options: ["A) It always uses recursion", "B) It solves problems by breaking them into overlapping sub-problems and caching results", "C) It only works on sorting problems", "D) It requires more code than brute force but is never faster"],
+            correct: "B", concept: "Dynamic programming — StackBreakor Tier" },
+        ],
+      };
+
+      const pool = DRAGON_POOLS[dragonName];
+      if (!pool) {
+        // Unknown dragon — return the static fallback with fresh answered:false flags
+        return DEMO_QUIZ_DATA.map(q => ({ ...q, answered: false }));
+      }
+
+      // Shuffle the pool so repeated fights with the same dragon vary the order
+      const shuffled = [...pool].sort(() => Math.random() - 0.5);
+      return shuffled.slice(0, 5).map(q => ({ ...q, answered: false }));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SOUND EFFECTS
+    // ════════════════════════════════════════════════════════════════════════
+
+    function playTone(freqs, durations, volume = 0.1) {
+      if (!soundEnabled) return;
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        freqs.forEach((f, i) => {
+          setTimeout(() => {
+            const osc = ctx.createOscillator(), gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.type = 'sine'; osc.frequency.value = f;
+            gain.gain.setValueAtTime(volume, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + durations[i]);
+            osc.start(ctx.currentTime); osc.stop(ctx.currentTime + durations[i]);
+            if (i === freqs.length - 1) osc.onended = () => ctx.close();
+          }, i * (durations[i - 1] || 0) * 900);
+        });
+      } catch { /* no audio */ }
+    }
+    const playCorrectDing  = () => playTone([1047, 1319], [0.12, 0.15], 0.1);
+    const playWrongSound   = () => playTone([220, 185],   [0.15, 0.2],  0.1);
+    const playStepSound    = () => playTone([523],         [0.08],       0.07);
+    const playFanfare      = () => playTone([523,659,784,1047], [0.15,0.15,0.15,0.3], 0.1);
+    const playRoar         = () => playTone([110,90,80],   [0.15,0.2,0.3], 0.12);
+    const playHealSound    = () => playTone([784,880,1047],[0.1,0.1,0.15], 0.08);
+    const playLevelUp      = () => playTone([523,659,784,1047,1319],[0.1,0.1,0.1,0.1,0.25], 0.1);
+    const playSpellSound   = () => playTone([440,660,880], [0.08,0.1,0.15], 0.09);
+
+    document.getElementById('sound-toggle').onclick = () => {
+      soundEnabled = !soundEnabled;
+      document.getElementById('sound-toggle').textContent = soundEnabled ? '🔊' : '🔇';
+    };
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CONFETTI
+    // ════════════════════════════════════════════════════════════════════════
+
+    function launchConfetti() {
+      const canvas = document.getElementById('confetti-canvas');
+      if (!canvas) return;
+      canvas.classList.remove('hidden');
+      canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+      const ctx = canvas.getContext('2d');
+      const COLORS = ['#F59E0B','#EF4444','#8B5CF6','#3B82F6','#10B981','#EC4899','#F97316'];
+      const particles = Array.from({ length: 160 }, () => ({
+        x: Math.random() * canvas.width, y: Math.random() * canvas.height * -0.5 - 10,
+        w: 6 + Math.random() * 8, h: 3 + Math.random() * 5,
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        speed: 2.5 + Math.random() * 4, rotation: Math.random() * Math.PI * 2,
+        rotationSpeed: (Math.random() - 0.5) * 0.2, opacity: 1
+      }));
+      const start = performance.now(), DURATION = 2800;
+      function frame(now) {
+        const elapsed = now - start;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        let alive = false;
+        particles.forEach(p => {
+          p.y += p.speed; p.rotation += p.rotationSpeed;
+          if (elapsed > DURATION - 800) p.opacity = Math.max(0, 1 - (elapsed - (DURATION - 800)) / 800);
+          if (p.y < canvas.height + 20) alive = true;
+          ctx.save(); ctx.globalAlpha = p.opacity;
+          ctx.translate(p.x + p.w / 2, p.y + p.h / 2); ctx.rotate(p.rotation);
+          ctx.fillStyle = p.color; ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+          ctx.restore();
+        });
+        if (alive && elapsed < DURATION + 600) requestAnimationFrame(frame);
+        else { ctx.clearRect(0, 0, canvas.width, canvas.height); canvas.classList.add('hidden'); }
+      }
+      requestAnimationFrame(frame);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MILESTONE BADGE
+    // ════════════════════════════════════════════════════════════════════════
+
+    const MILESTONES = {
+      3:  { emoji: '⭐', text: '3 Dungeons Cleared!' },
+      5:  { emoji: '🌟', text: '5 Dungeons — Hero Rising!' },
+      10: { emoji: '🔥', text: '10 Dungeons — Legendary!' },
+      25: { emoji: '🏆', text: '25 Dungeons — Grand Master!' }
+    };
+    function maybeShowMilestone(count) {
+      const m = MILESTONES[count]; if (!m) return;
+      const banner = document.getElementById('milestone-banner'); if (!banner) return;
+      banner.innerHTML = `<div class="milestone-badge inline-flex items-center gap-3 bg-gray-900 border border-yellow-500/50 shadow-2xl rounded-2xl px-6 py-4 text-sm font-bold text-white"><span class="text-3xl">${m.emoji}</span><span>${m.text}</span></div>`;
+      banner.classList.remove('hidden');
+      setTimeout(() => { banner.classList.add('hidden'); banner.innerHTML = ''; }, 4000);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // DUNGEON PROGRESS (localStorage)
+    // ════════════════════════════════════════════════════════════════════════
+
+    function getDungeonsCleared() {
+      const n = parseInt(localStorage.getItem(STORAGE_KEY), 10);
+      return (isNaN(n) || n < 0) ? 0 : n;
+    }
+    function incrementDungeons() {
+      const next = getDungeonsCleared() + 1;
+      localStorage.setItem(STORAGE_KEY, String(next));
+      maybeShowMilestone(next);
+      refreshRecap();
+    }
+    function refreshRecap() {
+      const c = getDungeonsCleared();
+      document.getElementById('dungeons-cleared').textContent = c;
+      document.getElementById('recap-level').textContent = player.level;
+      document.getElementById('player-recap').classList.toggle('hidden', c === 0);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // FLOATING DAMAGE NUMBERS
+    // ════════════════════════════════════════════════════════════════════════
+
+    function showDamagePopup(text, type, anchorId) {
+      const anchor = document.getElementById(anchorId);
+      if (!anchor) return;
+      const popup = document.createElement('div');
+      popup.className = `dmg-popup dmg-${type}`;
+      popup.textContent = text;
+      const rect = anchor.getBoundingClientRect();
+      popup.style.left = (rect.left + rect.width / 2 - 20) + 'px';
+      popup.style.top  = (rect.top + window.scrollY - 20) + 'px';
+      document.body.appendChild(popup);
+      setTimeout(() => popup.remove(), 1100);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BATTLE LOG
+    // ════════════════════════════════════════════════════════════════════════
+
+    function addToBattleLog(message, type = 'system') {
+      const log = document.getElementById('battle-log');
+      if (!log) return;
+      const div = document.createElement('div');
+      div.className = `log-${type}`;
+      div.innerHTML = `&gt; ${escapeHTML(message)}`;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+      while (log.children.length > 18) log.removeChild(log.firstChild);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // UI UPDATE
+    // ════════════════════════════════════════════════════════════════════════
+
+    function updateUI() {
+      // Clamp values
+      player.hp   = Math.max(0, Math.min(player.maxHp,   player.hp));
+      player.mana = Math.max(0, Math.min(player.maxMana, player.mana));
+      dragon.hp   = Math.max(0, dragon.hp);
+
+      const php = (player.hp   / player.maxHp)   * 100;
+      const pmp = (player.mana / player.maxMana)  * 100;
+      const dhp = (dragon.hp   / dragon.maxHp)    * 100;
+      const xpp = (player.xp   / 100)             * 100;
+
+      document.getElementById('player-hp-fill').style.width   = php + '%';
+      document.getElementById('player-mana-fill').style.width = pmp + '%';
+      document.getElementById('dragon-hp-fill').style.width   = dhp + '%';
+      document.getElementById('player-xp-fill').style.width   = xpp + '%';
+
+      document.getElementById('player-hp-text').textContent   = `${player.hp}/${player.maxHp}`;
+      document.getElementById('player-mana-text').textContent = `${player.mana}/${player.maxMana}`;
+      document.getElementById('dragon-hp-text').textContent   = `${dragon.hp}/${dragon.maxHp}`;
+      document.getElementById('player-level-display').textContent = `Lv.${player.level}`;
+
+      // Dragon enrage at 50%
+      if (dragon.hp <= dragon.maxHp / 2 && dragon.phase === 1) {
+        dragon.phase = 2;
+        dragon.attackPower = Math.floor(dragon.attackPower * 1.6);
+        document.getElementById('dragon-emoji').classList.add('dragon-enraged');
+        document.getElementById('dragon-phase-badge').textContent = '💢 ENRAGED';
+        addToBattleLog(`💢 ${dragon.name} ENRAGES! Attack power surges!`, 'system');
+        setDragonSpeech("I WILL DESTROY YOU!");
+      }
+
+      // Streak badge
+      const sb = document.getElementById('streak-badge');
+      if (player.streak >= 2) {
+        sb.classList.remove('hidden');
+        document.getElementById('streak-count').textContent = player.streak;
+      } else {
+        sb.classList.add('hidden');
+      }
+    }
+
+    function setDragonSpeech(text) {
+      document.getElementById('dragon-speech').innerHTML = `🐉 "${escapeHTML(text)}"`;
+    }
+
+    function animateMascot(state) {
+      const m = document.getElementById('mascot');
+      if (!m) return;
+      m.classList.remove('avatar-attack', 'avatar-hit', 'avatar-celebrate', 'avatar-think');
+      void m.offsetWidth;
+      if (state) m.classList.add(`avatar-${state}`);
+    }
+
+    function animateDragon(state) {
+      const d = document.getElementById('dragon-emoji');
+      if (!d) return;
+      d.classList.remove('dragon-attack', 'dragon-hit');
+      void d.offsetWidth;
+      if (state) d.classList.add(`dragon-${state}`);
+    }
+
+    function screenShake() {
+      const arena = document.getElementById('arena');
+      if (!arena) return;
+      arena.classList.remove('screen-shake');
+      void arena.offsetWidth;
+      arena.classList.add('screen-shake');
+      setTimeout(() => arena.classList.remove('screen-shake'), 400);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // AI: GENERATE QUIZ QUESTIONS
+    // ════════════════════════════════════════════════════════════════════════
+
+    function buildQuizPrompt(problem, subject) {
+      return `Generate exactly 5 multiple-choice questions about the concepts in this ${subject} problem.
+
+PROBLEM: ${problem}
+
+IMPORTANT RULES:
+- Return ONLY valid JSON. No markdown, no backticks, no extra text before or after.
+- Start with [ and end with ]
+- Each question must have exactly 4 options labelled A) B) C) D)
+- The "correct" field must be a single letter: "A", "B", "C", or "D"
+
+Example format:
+[{"question":"What is the time complexity of binary search?","options":["A) O(n)","B) O(log n)","C) O(n log n)","D) O(n²)"],"correct":"B","concept":"Binary search complexity"}]
+
+Return ONLY the JSON array, nothing else.`;
+    }
+
+    function parseQuiz(rawText) {
+      console.log('Raw AI response (quiz):', rawText);
+
+      let jsonStr = rawText;
+
+      // Strip markdown code fences (```json ... ``` or ``` ... ```)
+      const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (fenceMatch) jsonStr = fenceMatch[1];
+
+      // Grab the outermost [...] block
+      const start = jsonStr.indexOf('[');
+      const end   = jsonStr.lastIndexOf(']');
+      if (start === -1 || end === -1 || end <= start) {
+        console.error('No JSON array found in:', jsonStr);
+        throw Object.assign(new Error("Couldn't find question array in AI response. Try again."), { name: 'QuizParseError' });
+      }
+      jsonStr = jsonStr.slice(start, end + 1);
+
+      // Fix common LLM JSON mistakes
+      jsonStr = jsonStr
+        .replace(/,\s*}/g, '}')   // trailing comma before }
+        .replace(/,\s*]/g, ']')   // trailing comma before ]
+        .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":'); // unquoted keys
+
+      let arr;
+      try {
+        arr = JSON.parse(jsonStr);
+      } catch (e) {
+        console.error('JSON.parse error:', e.message, '\nAttempted string:', jsonStr);
+        throw Object.assign(new Error('AI response was malformed JSON. Try again.'), { name: 'QuizParseError' });
+      }
+
+      if (!Array.isArray(arr) || arr.length === 0) {
+        throw Object.assign(new Error("AI didn't return a valid question array. Try again."), { name: 'QuizParseError' });
+      }
+
+      // Normalise each question — fill in any missing fields with safe defaults
+      return arr.slice(0, 4).map(q => ({
+        question: typeof q.question === 'string' && q.question ? q.question : 'What concept does this problem primarily test?',
+        options:  Array.isArray(q.options) && q.options.length >= 4
+                    ? q.options.slice(0, 4)
+                    : ['A) Understand the core concepts', 'B) Apply the learned pattern', 'C) Debug common mistakes', 'D) All of the above'],
+        correct:  typeof q.correct === 'string' && /^[A-D]$/.test(q.correct.trim()) ? q.correct.trim() : 'D',
+        concept:  typeof q.concept === 'string' && q.concept ? q.concept : 'Core problem fundamentals',
+        answered: false
+      }));
+    }
+
+    async function loadBattleQuestions(onRetryMsg) {
+      // Use live API only when explicitly enabled and a real key is present
+      const useLiveAPI = !DEMO_MODE && !window._demoModeOverride && API_KEY && API_KEY !== '';
+
+      if (!useLiveAPI) {
+        await new Promise(r => setTimeout(r, 800));
+        return generateFreshDemoQuestions(currentProblem, currentSubject, dragon.name);
+      }
+      try {
+        const res  = await callLLMWithRetry({
+          messages:    [{ role: 'user', content: buildQuizPrompt(currentProblem, currentSubject) }],
+          temperature: 0.3,
+          max_tokens:  1000
+        }, onRetryMsg);
+        const data    = await res.json();
+        const content = data?.choices?.[0]?.message?.content || '';
+        return parseQuiz(content);
+      } catch (err) {
+        if (err.name === 'RateLimitError' || err.name === 'TimeoutError') throw err;
+        console.error('Quiz generation/parse failed — falling back to demo questions:', err);
+        addToBattleLog('⚠️ AI questions unavailable — using built-in challenges', 'system');
+        return generateFreshDemoQuestions(currentProblem, currentSubject, dragon.name);
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // AI: GENERATE HINTS
+    // ════════════════════════════════════════════════════════════════════════
+
+    function buildHintPrompt(problem, subject) {
+      return [
+        `You are a patient tutor in a coding RPG. A student is studying this ${subject} problem:`,
+        `PROBLEM: ${problem}`,
+        'Do NOT give the answer. Respond with EXACTLY THREE lines:',
+        'Think about: [concept]',
+        'Try breaking it down: [smaller step]',
+        'Common mistake to avoid: [trap]',
+        'No other text.'
+      ].join('\n');
+    }
+
+    function parseHints(rawText) {
+      console.log('Raw AI response (hints):', rawText);
+      const lines    = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+      const prefixes = ['Think about:', 'Try breaking it down:', 'Common mistake to avoid:'];
+      const fallbacks = [
+        'Think about: What are the key concepts and constraints in this problem?',
+        'Try breaking it down: Start with the simplest possible input and build up.',
+        'Common mistake to avoid: Make sure you understand the fundamentals before jumping to code.'
+      ];
+      return prefixes.map((p, i) => {
+        // Exact prefix match first
+        let line = lines.find(l => l.startsWith(p));
+        // Case-insensitive fallback
+        if (!line) line = lines.find(l => l.toLowerCase().startsWith(p.toLowerCase()));
+        return line || fallbacks[i];
+      });
+    }
+
+    async function loadHints(onRetryMsg) {
+      const useLiveAPI = !DEMO_MODE && !window._demoModeOverride && API_KEY && API_KEY !== '';
+      if (!useLiveAPI) {
+        await new Promise(r => setTimeout(r, 600));
+        return ["Think about: Base cases and termination conditions.", "Try breaking it down: Solve for n=1 first, then generalise.", "Common mistake to avoid: Off-by-one errors and modifying input while iterating."];
+      }
+      const res = await callLLMWithRetry({ messages: [{ role: 'user', content: buildHintPrompt(currentProblem, currentSubject) }], temperature: 0.7, max_tokens: 400 }, onRetryMsg);
+      const data = await res.json();
+      return parseHints(data?.choices?.[0]?.message?.content || '');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BATTLE QUESTION RENDERING
+    // ════════════════════════════════════════════════════════════════════════
+
+    function renderCurrentQuestion() {
+      const q = currentQuiz[questionIdx];
+      if (!q) return;
+
+      const container = document.getElementById('answer-options');
+      container.innerHTML = '';
+
+      // Questions remaining counter
+      const remaining = currentQuiz.length - questionIdx;
+      const prompt = document.createElement('div');
+      prompt.className = 'text-xs font-bold text-blue-300 uppercase tracking-wide mb-2 flex items-center justify-between';
+      prompt.innerHTML = `
+        <span>⚔️ Question ${questionIdx + 1} of ${currentQuiz.length}</span>
+        <span class="text-yellow-300">${remaining} question${remaining !== 1 ? 's' : ''} remaining</span>
+      `;
+      container.appendChild(prompt);
+
+      const qText = document.createElement('div');
+      qText.className = 'text-sm text-gray-200 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 mb-2';
+      qText.textContent = q.question;
+      container.appendChild(qText);
+
+      const grid = document.createElement('div');
+      grid.className = 'grid grid-cols-1 gap-2';
+      q.options.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'option-btn text-left w-full bg-white/5 px-4 py-2.5 rounded-xl text-sm text-gray-200';
+        btn.textContent = opt;
+        btn.dataset.opt = opt.charAt(0);
+        btn.addEventListener('click', () => handleAttack(btn.dataset.opt, q.correct, btn));
+        grid.appendChild(btn);
+      });
+      container.appendChild(grid);
+      container.classList.remove('hidden');
+      document.getElementById('action-buttons').classList.remove('hidden');
+    }
+
+    /** Refreshes the standalone remaining-questions counter (called after each answer). */
+    function updateQuestionsCounter() {
+      const badge = document.getElementById('questions-remaining-badge');
+      if (!badge) return;
+      // -1 because questionIdx hasn't been incremented yet when this is called
+      const remaining = currentQuiz.length - questionIdx - 1;
+      badge.textContent = remaining > 0 ? `${remaining} left` : 'Final!';
+      // Trigger pulse animation
+      badge.classList.remove('badge-pulse');
+      void badge.offsetWidth; // force reflow to restart animation
+      badge.classList.add('badge-pulse');
+      setTimeout(() => badge.classList.remove('badge-pulse'), 400);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CORE BATTLE LOGIC
+    // ════════════════════════════════════════════════════════════════════════
+
+    function handleAttack(selected, correct, clickedBtn) {
+      // Lock all buttons immediately
+      document.querySelectorAll('.option-btn').forEach(b => { b.disabled = true; });
+
+      if (selected === correct) {
+        // ── Correct ──
+        const damage = 18 + Math.floor(Math.random() * 14) + (player.level - 1) * 3;
+        dragon.hp -= damage;
+        player.streak++;
+        questionsCorrect++;
+
+        clickedBtn.classList.add('option-correct');
+        animateMascot('attack');
+        animateDragon('hit');
+        showDamagePopup(`-${damage}💥`, 'dragon', 'dragon-emoji');
+        playCorrectDing();
+        addToBattleLog(`⚔️ Correct! Dealt ${damage} damage to ${dragon.name}!`, 'player');
+
+        if (player.streak >= 3) {
+          const bonus = 10 + player.level * 2;
+          dragon.hp -= bonus;
+          addToBattleLog(`🔥 STREAK ×${player.streak}! +${bonus} bonus damage!`, 'spell');
+          showDamagePopup(`🔥+${bonus}`, 'dragon', 'dragon-emoji');
+        }
+
+        const speeches = ["Impossible...", "Lucky shot!", "I'm not done yet!", "You'll regret that!"];
+        setDragonSpeech(speeches[Math.floor(Math.random() * speeches.length)]);
+
+      } else {
+        // ── Wrong — dragon attacks ──
+        const damage = dragon.attackPower + Math.floor(Math.random() * 8);
+        player.hp -= damage;
+        player.streak = 0;
+
+        // Highlight correct answer in green and wrong choice in red
+        document.querySelectorAll('.option-btn').forEach(b => {
+          if (b.dataset.opt === correct) b.classList.add('option-correct');
+        });
+        clickedBtn.classList.add('option-wrong');
+
+        // Identify the full text of the correct option for the log message
+        const correctBtn = document.querySelector(`.option-btn[data-opt="${correct}"]`);
+        const correctText = correctBtn ? correctBtn.textContent.trim() : correct;
+
+        animateDragon('attack');
+        animateMascot('hit');
+        screenShake();
+        showDamagePopup(`-${damage}❤️`, 'player', 'mascot');
+        playWrongSound();
+        playRoar();
+        addToBattleLog(`🐉 ${dragon.name} attacks! You take ${damage} damage!`, 'dragon');
+        addToBattleLog(`💡 Correct answer: ${correctText}`, 'system');
+        setDragonSpeech("FOOLS MAKE THE SAME MISTAKE TWICE!");
+      }
+
+      updateUI();
+      if (checkBattleEnd()) return;
+
+      // Update remaining-questions counter before advancing
+      updateQuestionsCounter();
+
+      // Advance after short pause
+      setTimeout(() => {
+        questionIdx++;
+        if (questionIdx < currentQuiz.length) {
+          renderCurrentQuestion();
+        } else {
+          // Out of generated questions — refill
+          document.getElementById('answer-options').innerHTML = '';
+          document.getElementById('action-buttons').classList.add('hidden');
+          startBattleLoading("Generating more challenges… ⚔️");
+          loadBattleQuestions(msg => updateBattleLoadingMsg(msg))
+            .then(qs => {
+              currentQuiz = qs; questionIdx = 0;
+              stopBattleLoading();
+              renderCurrentQuestion();
+            })
+            .catch(err => {
+              stopBattleLoading();
+              showBattleError(err.message, () => {}, err.name === 'RateLimitError');
+            });
+        }
+      }, 900);
+    }
+
+    function checkBattleEnd() {
+      if (dragon.hp <= 0) { setTimeout(victory, 600); return true; }
+      if (player.hp <= 0) { setTimeout(defeat, 600);  return true; }
+      return false;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SPELLS
+    // ════════════════════════════════════════════════════════════════════════
+
+    function castFireball() {
+      if (player.mana < 20) { addToBattleLog("❌ Not enough mana for Fireball! (need 20)", 'system'); return; }
+      player.mana -= 20;
+      const dmg = 35 + Math.floor(Math.random() * 20) + (player.level - 1) * 5;
+      dragon.hp -= dmg;
+      animateMascot('attack');
+      animateDragon('hit');
+      showDamagePopup(`🔥-${dmg}`, 'dragon', 'dragon-emoji');
+      playSpellSound();
+      addToBattleLog(`🔥 FIREBALL! ${dmg} damage to ${dragon.name}!`, 'spell');
+      updateUI();
+      checkBattleEnd();
+    }
+
+    function castHeal() {
+      if (player.mana < 15) { addToBattleLog("❌ Not enough mana for Heal! (need 15)", 'system'); return; }
+      if (player.hp >= player.maxHp) { addToBattleLog("❤️ Already at full health!", 'system'); return; }
+      player.mana -= 15;
+      const heal = 25 + Math.floor(Math.random() * 15);
+      player.hp = Math.min(player.maxHp, player.hp + heal);
+      animateMascot('celebrate');
+      showDamagePopup(`+${heal}💚`, 'heal', 'mascot');
+      playHealSound();
+      addToBattleLog(`💚 Heal! Restored ${heal} HP!`, 'spell');
+      updateUI();
+    }
+
+    function drinkPotion() {
+      if (player.mana < 20) { addToBattleLog("❌ Not enough mana for Potion! (need 20)", 'system'); return; }
+      player.mana -= 20;
+      const heal = 30 + Math.floor(Math.random() * 20);
+      player.hp = Math.min(player.maxHp, player.hp + heal);
+      animateMascot('celebrate');
+      showDamagePopup(`+${heal}🧪`, 'heal', 'mascot');
+      playHealSound();
+      addToBattleLog(`🧪 Health Potion! Restored ${heal} HP!`, 'spell');
+      updateUI();
+    }
+
+    async function readHint() {
+      if (player.mana < 5) { addToBattleLog("❌ Not enough mana for Hint Tome! (need 5)", 'system'); return; }
+      player.mana -= 5;
+      updateUI();
+      addToBattleLog("📖 Consulting the ancient tome…", 'system');
+
+      const modal = document.getElementById('hint-modal');
+      const body  = document.getElementById('hint-modal-body');
+      body.innerHTML = '<div class="flex justify-center py-4"><div class="spinner"></div></div>';
+      modal.classList.remove('hidden');
+
+      try {
+        const hints = await loadHints(msg => {
+          body.innerHTML = `<p class="text-yellow-400 text-xs text-center">${escapeHTML(msg)}</p>`;
+        });
+        body.innerHTML = hints.map(h =>
+          `<div class="hint-card">${escapeHTML(h)}</div>`
+        ).join('');
+        addToBattleLog("📖 Wisdom acquired from the tome!", 'spell');
+      } catch (err) {
+        body.innerHTML = `<p class="text-red-400 text-sm">${escapeHTML(err.message)}</p>`;
+        if (err.name === 'RateLimitError') {
+          body.innerHTML += `<button type="button" onclick="window._demoModeOverride=true; document.getElementById('hint-modal').classList.add('hidden');" class="mt-2 w-full py-2 bg-emerald-600 rounded-lg text-xs font-bold">Switch to Demo Mode</button>`;
+        }
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // VICTORY / DEFEAT
+    // ════════════════════════════════════════════════════════════════════════
+
+    function victory() {
+      const xpGained = 50 + Math.floor(Math.random() * 30) + (dragon.maxHp / 10 | 0);
+      player.xp += xpGained;
+      player.streak = 0;
+      addToBattleLog(`🏆 VICTORY! +${xpGained} XP!`, 'system');
+      launchConfetti();
+      playFanfare();
+      animateMascot('celebrate');
+      incrementDungeons();
+
+      let levelUpMsg = '';
+      if (player.xp >= 100) {
+        player.level++;
+        player.xp -= 100;
+        player.maxHp   += 20; player.hp = player.maxHp;
+        player.maxMana += 15; player.mana = player.maxMana;
+        addToBattleLog(`🎉 LEVEL UP! Now Level ${player.level}!`, 'system');
+        playLevelUp();
+        levelUpMsg = `🎉 LEVEL UP! You are now Level ${player.level}! HP and Mana increased!`;
+      }
+
+      document.getElementById('victory-msg').textContent =
+        `You defeated ${dragon.name} and gained ${xpGained} XP! HP remaining: ${player.hp}/${player.maxHp}`;
+      const ln = document.getElementById('levelup-notice');
+      if (levelUpMsg) { ln.textContent = levelUpMsg; ln.classList.remove('hidden'); }
+      else             { ln.classList.add('hidden'); }
+      document.getElementById('victory-modal').classList.remove('hidden');
+    }
+
+    function defeat() {
+      addToBattleLog(`💀 Defeated by ${dragon.name}… but you'll be back.`, 'dragon');
+      playWrongSound();
+      animateMascot('hit');
+      document.getElementById('defeat-msg').textContent =
+        `${dragon.name} proved too powerful this time. Rest, recover, and try again.`;
+      document.getElementById('defeat-modal').classList.remove('hidden');
+    }
+
+    function resetDragon(tier) {
+      const template = DRAGON_TEMPLATES[Math.min(tier, DRAGON_TEMPLATES.length - 1)];
+      dragon = { ...template, phase: 1 };
+      // Scale dragon for player level
+      if (player.level > 1) {
+        dragon.hp      = Math.floor(dragon.hp      * (1 + (player.level - 1) * 0.2));
+        dragon.maxHp   = dragon.hp;
+        dragon.attackPower = Math.floor(dragon.attackPower * (1 + (player.level - 1) * 0.1));
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BATTLE LOADING STATE
+    // ════════════════════════════════════════════════════════════════════════
+
+    const LOADING_MSGS = [
+      "Consulting the ancient tomes… 📖",
+      "The dragon prepares a challenge… 🐉",
+      "Summoning knowledge from the void… ✨",
+      "Forging your battle questions… ⚔️",
+      "Metacognition engaged! 💡"
+    ];
+    let _loadingInterval = null;
+
+    function startBattleLoading(initialMsg) {
+      const el = document.getElementById('battle-loading');
+      const msg = document.getElementById('battle-loading-msg');
+      if (msg) msg.textContent = initialMsg || LOADING_MSGS[0];
+      el.classList.remove('hidden');
+      document.getElementById('answer-options').classList.add('hidden');
+      document.getElementById('action-buttons').classList.add('hidden');
+
+      let idx = 0;
+      _loadingInterval = setInterval(() => {
+        idx = (idx + 1) % LOADING_MSGS.length;
+        if (msg) { msg.style.opacity = '0'; setTimeout(() => { msg.textContent = LOADING_MSGS[idx]; msg.style.opacity = '1'; }, 150); }
+      }, 2200);
+    }
+    function stopBattleLoading() {
+      clearInterval(_loadingInterval);
+      document.getElementById('battle-loading').classList.add('hidden');
+    }
+    function updateBattleLoadingMsg(txt) {
+      const msg = document.getElementById('battle-loading-msg');
+      if (msg) { msg.style.opacity = '0'; setTimeout(() => { msg.textContent = txt; msg.style.opacity = '1'; }, 150); }
+    }
+
+    function showBattleError(message, retryFn, isRateLimit = false) {
+      const el = document.getElementById('battle-error');
+      const demoBtn = isRateLimit
+        ? `<button type="button" class="demo-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg">Switch to Demo Mode</button>`
+        : '';
+      el.innerHTML = `
+        <div class="flex flex-col gap-2 p-3 bg-red-900/40 border border-red-500/30 rounded-xl text-xs">
+          <p class="text-red-300">${escapeHTML(message)}</p>
+          <div class="flex gap-2 flex-wrap">
+            <button type="button" class="retry-btn px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg">Try Again</button>
+            ${demoBtn}
+          </div>
+        </div>`;
+      el.querySelector('.retry-btn').addEventListener('click', () => { el.innerHTML = ''; el.classList.add('hidden'); retryFn(); });
+      if (isRateLimit) {
+        el.querySelector('.demo-btn').addEventListener('click', () => {
+          window._demoModeOverride = true; el.innerHTML = ''; el.classList.add('hidden'); retryFn();
+        });
+      }
+      el.classList.remove('hidden');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SCREEN TRANSITIONS
+    // ════════════════════════════════════════════════════════════════════════
+
+    function showQuestScreen() {
+      document.getElementById('screen-quest').classList.remove('hidden');
+      document.getElementById('screen-battle').classList.add('hidden');
+      refreshRecap();
+    }
+
+    function startBattle() {
+      // Reset battle state — always clear quiz so next dragon gets fresh questions
+      questionsCorrect = 0;
+      questionIdx      = 0;
+      currentQuiz      = [];
+      player.streak    = 0;
+
+      // Reset dragon
+      resetDragon(dragonTier);
+
+      // Switch to battle screen
+      document.getElementById('screen-quest').classList.add('hidden');
+      document.getElementById('screen-battle').classList.remove('hidden');
+
+      // Populate problem display
+      document.getElementById('problem-display').textContent = currentProblem;
+      document.getElementById('dragon-name-label').textContent = dragon.name;
+      document.getElementById('dragon-name-arena').textContent = dragon.name.toUpperCase();
+      document.getElementById('dragon-emoji').textContent = dragon.emoji;
+      document.getElementById('dragon-emoji').classList.remove('dragon-enraged');
+      document.getElementById('dragon-phase-badge').textContent = '';
+      setDragonSpeech(dragon.speech);
+
+      // Clear log
+      document.getElementById('battle-log').innerHTML = '';
+      addToBattleLog(`⚔️ Battle begins! Defeat ${dragon.name}!`, 'system');
+      addToBattleLog(`💡 Answer correctly to deal damage. Use spells wisely.`, 'system');
+
+      // Reset/restore player HP fully on a new quest, keep level/XP
+      player.hp   = player.maxHp;
+      player.mana = player.maxMana;
+      updateUI();
+
+      playStepSound();
+
+      // Load questions
+      startBattleLoading("The dragon challenges your knowledge… 🐉");
+      loadBattleQuestions(msg => updateBattleLoadingMsg(msg))
+        .then(qs => {
+          currentQuiz = qs; stopBattleLoading(); renderCurrentQuestion();
+        })
+        .catch(err => {
+          stopBattleLoading();
+          showBattleError(err.message, () => startBattle(), err.name === 'RateLimitError');
+        });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // EVENT WIRING
+    // ════════════════════════════════════════════════════════════════════════
+
+    // Enter Dungeon button
+    document.getElementById('enter-dungeon-btn').onclick = () => {
+      const problem = document.getElementById('problem-input').value.trim();
+      const subject = document.getElementById('subject-select').value;
+      const errEl   = document.getElementById('input-error');
+
+      errEl.textContent = ''; errEl.classList.add('hidden');
+      if (!problem) { errEl.textContent = 'Enter a problem before entering the dungeon!'; errEl.classList.remove('hidden'); return; }
+
+      if (!validateApiKey(API_KEY)) {
+        const banner = document.getElementById('api-key-error');
+        banner.className = 'border bg-red-900/50 border-red-500/40 text-red-300 rounded-xl px-4 py-3 text-center text-sm font-medium mb-4';
+        banner.innerHTML = `<strong>No Groq API key.</strong> Get a free key at <a href="https://console.groq.com/keys" target="_blank" class="underline">console.groq.com</a>, paste it in the code, or enable Demo Mode.`;
+        banner.classList.remove('hidden');
+        return;
+      }
+
+      currentProblem = problem;
+      currentSubject = subject;
+      dragonTier = 0; // reset tier for new quest
+      startBattle();
+    };
+
+    // Demo mode toggle
+    document.getElementById('demo-toggle-btn').onclick = () => {
+      DEMO_MODE = !DEMO_MODE;
+      window._demoModeOverride = DEMO_MODE;
+      document.getElementById('demo-toggle-btn').textContent = DEMO_MODE ? 'disable' : 'enable';
+      const banner = document.getElementById('api-key-error');
+      if (DEMO_MODE) {
+        banner.className = 'border bg-blue-900/50 border-blue-500/40 text-blue-300 rounded-xl px-4 py-3 text-center text-sm font-medium mb-4';
+        banner.innerHTML = '🎮 <strong>Demo Mode ON</strong> — Mock AI responses will be used.';
+        banner.classList.remove('hidden');
+      } else {
+        if (validateApiKey(API_KEY)) {
+          banner.classList.add('hidden');
+        } else {
+          banner.className = 'border bg-red-900/50 border-red-500/40 text-red-300 rounded-xl px-4 py-3 text-center text-sm font-medium mb-4';
+          banner.innerHTML = `<strong>No Groq API key.</strong> See <a href="INSTALL.md" target="_blank" class="underline">INSTALL.md</a> or <a href="https://console.groq.com/keys" target="_blank" class="underline">get a free key</a>.`;
+          banner.classList.remove('hidden');
+        }
+      }
+    };
+
+    // Spell buttons
+    document.getElementById('hint-btn').onclick     = () => readHint();
+    document.getElementById('fireball-btn').onclick = () => castFireball();
+    document.getElementById('heal-btn').onclick     = () => castHeal();
+    document.getElementById('potion-btn').onclick   = () => drinkPotion();
+
+    // Close hint modal
+    document.getElementById('close-hint-modal').onclick = () =>
+      document.getElementById('hint-modal').classList.add('hidden');
+
+    // Victory modal
+    document.getElementById('next-dragon-btn').onclick = () => {
+      document.getElementById('victory-modal').classList.add('hidden');
+      dragonTier = Math.min(dragonTier + 1, DRAGON_TEMPLATES.length - 1);
+      // Clear cached questions so the new dragon gets a fresh set
+      currentQuiz = [];
+      questionIdx = 0;
+      startBattle();
+    };
+    document.getElementById('new-quest-btn').onclick = () => {
+      document.getElementById('victory-modal').classList.add('hidden');
+      dragonTier = 0;
+      showQuestScreen();
+    };
+
+    // Defeat modal
+    document.getElementById('retry-battle-btn').onclick = () => {
+      document.getElementById('defeat-modal').classList.add('hidden');
+      player.hp = player.maxHp; player.mana = player.maxMana;
+      startBattle();
+    };
+    document.getElementById('defeat-new-quest-btn').onclick = () => {
+      document.getElementById('defeat-modal').classList.add('hidden');
+      dragonTier = 0;
+      showQuestScreen();
+    };
+
+    // Retreat
+    document.getElementById('retreat-btn').onclick = () => {
+      document.getElementById('defeat-modal').classList.add('hidden');
+      document.getElementById('victory-modal').classList.add('hidden');
+      dragonTier = 0;
+      showQuestScreen();
+    };
+
+    // Close modals on backdrop click
+    ['hint-modal', 'victory-modal', 'defeat-modal'].forEach(id => {
+      document.getElementById(id).addEventListener('click', e => {
+        if (e.target === e.currentTarget) {
+          if (id !== 'victory-modal' && id !== 'defeat-modal')
+            document.getElementById(id).classList.add('hidden');
+        }
+      });
+    });
+
+    // ════════════════════════════════════════════════════════════════════════
+    // INIT
+    // ════════════════════════════════════════════════════════════════════════
+
+    (function init() {
+      refreshRecap();
+
+      const banner    = document.getElementById('api-key-error');
+      const toggleBtn = document.getElementById('demo-toggle-btn');
+
+      if (!DEMO_MODE && validateApiKey(API_KEY)) {
+        // Live API mode — config.js was loaded successfully
+        banner.className = 'border bg-green-900/50 border-green-500/40 text-green-300 rounded-xl px-4 py-3 text-center text-sm mb-4';
+        banner.innerHTML = '✅ <strong>Live AI mode</strong> — Real Groq API questions enabled.';
+        banner.classList.remove('hidden');
+        toggleBtn.textContent = 'disable';
+      } else if (!DEMO_MODE && !validateApiKey(API_KEY)) {
+        // Tried live mode but no valid key
+        DEMO_MODE = true; // safe fallback
+        banner.className = 'border bg-red-900/50 border-red-500/40 text-red-300 rounded-xl px-4 py-3 text-center text-sm mb-4';
+        banner.innerHTML = `<strong>No Groq API key found.</strong> See <a href="INSTALL.md" target="_blank" class="underline font-bold">INSTALL.md</a> for setup, or keep <button onclick="document.getElementById('demo-toggle-btn').click()" class="underline font-bold">Demo Mode</button>.`;
+        banner.classList.remove('hidden');
+        toggleBtn.textContent = 'enable'; // demo is off, button enables it
+      } else {
+        // Default demo mode — no banner needed unless they try to disable it
+        toggleBtn.textContent = 'disable';
+        // Suppress the "no key" banner since demo mode is intentional
+      }
+    })();
+  </script>
+</body>
+</html>
